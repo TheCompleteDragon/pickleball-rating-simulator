@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pickleball Rating Simulator</title>
-  <meta name="description" content="Predict your pickleball rating changes before you play.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏓</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -18,22 +16,32 @@
 <script type="text/babel">
 const { useState, useEffect } = React;
 
-function App() {
+function PickleballRatingSimulator() {
+  // Tab state
   const [activeTab, setActiveTab] = useState('simulator');
+
+  // Match Simulator state
   const [you, setYou] = useState({ dupr: 3.50, reliability: 25 });
   const [partner, setPartner] = useState({ dupr: 3.70, reliability: 60 });
   const [opp1, setOpp1] = useState({ dupr: 3.90, reliability: 75 });
   const [opp2, setOpp2] = useState({ dupr: 3.80, reliability: 75 });
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [yourScore, setYourScore] = useState(11);
   const [theirScore, setTheirScore] = useState(9);
   const [showQuickRef, setShowQuickRef] = useState(true);
+
+  // Path to Target state
   const [pathCurrent, setPathCurrent] = useState({ dupr: 3.50, reliability: 25 });
   const [targetDupr, setTargetDupr] = useState(4.00);
+  const [selectedPath, setSelectedPath] = useState('safe'); // 'safe' or 'aggressive'
+
+  // Tournament Simulator state
   const [tournamentStart, setTournamentStart] = useState({ dupr: 3.50, reliability: 25 });
   const [tournamentPartner, setTournamentPartner] = useState({ dupr: 3.70, reliability: 60 });
   const [tournamentMatches, setTournamentMatches] = useState([]);
   const [newMatch, setNewMatch] = useState({ opp1: 3.80, opp2: 3.75, yourScore: 11, theirScore: 7 });
 
+  // Core calculation function
   const calcChange = (playerR, playerRel, partnerR, partnerRel, oppAvg, ourScore, oppScore) => {
     const teamAvg = (playerR + partnerR) / 2;
     const gap = teamAvg - oppAvg;
@@ -42,118 +50,388 @@ function App() {
     const perf = actual - expected;
     const k = 5 * Math.exp(-playerRel / 45);
     let mult = 1.0;
-    if (gap > 0.1 && perf < 0) mult = 1 + 2.0 * Math.abs(gap);
-    else if (Math.abs(gap) > 0.1) mult = 1 + 1.0 * Math.abs(gap);
+    if (gap > 0.1 && perf < 0) {
+      mult = 1 + 2.0 * Math.abs(gap);
+    } else if (Math.abs(gap) > 0.1) {
+      mult = 1 + 1.0 * Math.abs(gap);
+    }
     return 0.006 * k * perf * mult;
   };
 
+  // Simulate path to target
+  const simulatePath = (startDupr, startRel, target, avgGainPerGame) => {
+    let dupr = startDupr;
+    let rel = startRel;
+    let games = 0;
+    const phases = [];
+    let phaseStart = dupr;
+    let phaseGames = 0;
+
+    while (dupr < target && games < 100) {
+      const k = 5 * Math.exp(-rel / 45);
+      const baseGain = avgGainPerGame * (k / 2.5); // Scale gain by K factor
+      dupr += baseGain;
+      rel = rel + 15 * (100 - rel) / 100;
+      games++;
+      phaseGames++;
+
+      // Track phases every 5 games
+      if (phaseGames === 5 || dupr >= target) {
+        phases.push({
+          games: phaseGames,
+          totalGames: games,
+          startDupr: phaseStart,
+          endDupr: Math.min(dupr, target),
+          gain: Math.min(dupr, target) - phaseStart
+        });
+        phaseStart = dupr;
+        phaseGames = 0;
+      }
+    }
+
+    return { totalGames: games, phases, finalDupr: dupr };
+  };
+
+  // Match Simulator calculations
   const teamAvg = (you.dupr + partner.dupr) / 2;
   const oppAvg = (opp1.dupr + opp2.dupr) / 2;
   const gap = teamAvg - oppAvg;
   const status = gap < -0.1 ? 'UNDERDOG' : gap > 0.1 ? 'FAVORITE' : 'EVEN';
-  const scenarios = [{us:11,them:0},{us:11,them:3},{us:11,them:6},{us:11,them:9},{us:9,them:11},{us:6,them:11},{us:3,them:11},{us:0,them:11}];
 
+  const scenarios = [
+    { us: 11, them: 0 },
+    { us: 11, them: 3 },
+    { us: 11, them: 6 },
+    { us: 11, them: 9 },
+    { us: 9, them: 11 },
+    { us: 6, them: 11 },
+    { us: 3, them: 11 },
+    { us: 0, them: 11 },
+  ];
+
+  // Path to Target calculations
   const pointsNeeded = targetDupr - pathCurrent.dupr;
   const isLowReliability = pathCurrent.reliability < 40;
-
-  const estimateGames = (startDupr, reliability, targetDupr) => {
-    if (targetDupr - startDupr <= 0) return { safe: 0, aggressive: 0, safeRange: '0', aggressiveRange: '0' };
-    const getOppAvg = (d) => d <= 3.0 ? 3.25 : d <= 3.5 ? 3.75 : d <= 4.0 ? 4.25 : d <= 4.5 ? 4.75 : d <= 5.0 ? 5.25 : 5.75;
-    const getAggOppAvg = (d) => d <= 3.0 ? 3.75 : d <= 3.5 ? 4.25 : d <= 4.0 ? 4.75 : d <= 4.5 ? 5.25 : 5.75;
-    let safeGames = 0, currentDupr = startDupr, currentRel = reliability;
+  
+  // Estimate games needed based on actual math - simulates full path with bracket changes
+  const estimateGames = (startDupr, reliability, targetDupr, partnerOffset = 0.2) => {
+    const points = targetDupr - startDupr;
+    if (points <= 0) return { safe: 0, aggressive: 0, safeRange: '0', aggressiveRange: '0', safeDetails: [], aggressiveDetails: [] };
+    
+    // Helper to get opponent avg for a bracket
+    const getOppAvg = (dupr) => {
+      if (dupr <= 3.0) return 3.25;
+      if (dupr <= 3.5) return 3.75;
+      if (dupr <= 4.0) return 4.25;
+      if (dupr <= 4.5) return 4.75;
+      if (dupr <= 5.0) return 5.25;
+      return 5.75;
+    };
+    
+    const getAggressiveOppAvg = (dupr) => {
+      if (dupr <= 3.0) return 3.75;
+      if (dupr <= 3.5) return 4.25;
+      if (dupr <= 4.0) return 4.75;
+      if (dupr <= 4.5) return 5.25;
+      return 5.75;
+    };
+    
+    // SAFE PATH simulation
+    let safeGames = 0;
+    let currentDupr = startDupr;
+    let currentRel = reliability;
+    let safeDetails = [];
+    
     while (currentDupr < targetDupr && safeGames < 100) {
       const k = 5 * Math.exp(-currentRel / 45);
-      const g = (currentDupr + 0.1) - getOppAvg(currentDupr);
-      const m = Math.abs(g) > 0.1 ? 1 + Math.abs(g) : 1;
-      currentDupr += 0.006 * k * 4 * m;
+      const teamAvg = (currentDupr + currentDupr + partnerOffset) / 2;
+      const oppAvg = getOppAvg(currentDupr);
+      const gap = teamAvg - oppAvg;
+      const mult = Math.abs(gap) > 0.1 ? 1 + Math.abs(gap) : 1;
+      
+      // Assume winning by ~4 better than expected on average
+      const avgGain = 0.006 * k * 4 * mult;
+      currentDupr += avgGain;
       currentRel = Math.min(100, currentRel + 15 * (100 - currentRel) / 100);
       safeGames++;
+      
+      // Track details for first few games
+      if (safeGames <= 5 || (safeGames <= 15 && safeGames % 5 === 0)) {
+        safeDetails.push({ game: safeGames, dupr: currentDupr, gain: avgGain, rel: currentRel });
+      }
     }
-    let aggGames = 0; currentDupr = startDupr; currentRel = reliability;
-    while (currentDupr < targetDupr && aggGames < 100) {
+    
+    // AGGRESSIVE PATH simulation
+    let aggressiveGames = 0;
+    currentDupr = startDupr;
+    currentRel = reliability;
+    let aggressiveDetails = [];
+    
+    while (currentDupr < targetDupr && aggressiveGames < 100) {
       const k = 5 * Math.exp(-currentRel / 45);
-      const g = (currentDupr + 0.1) - getAggOppAvg(currentDupr);
-      const m = Math.abs(g) > 0.1 ? 1 + Math.abs(g) : 1;
-      currentDupr += 0.006 * k * 8 * m;
+      const teamAvg = (currentDupr + currentDupr + partnerOffset) / 2;
+      const oppAvg = getAggressiveOppAvg(currentDupr);
+      const gap = teamAvg - oppAvg;
+      const mult = Math.abs(gap) > 0.1 ? 1 + Math.abs(gap) : 1;
+      
+      // Playing up: bigger underdog, assume +8 performance (close wins or close losses)
+      const avgGain = 0.006 * k * 8 * mult;
+      currentDupr += avgGain;
       currentRel = Math.min(100, currentRel + 15 * (100 - currentRel) / 100);
-      aggGames++;
+      aggressiveGames++;
+      
+      if (aggressiveGames <= 5 || (aggressiveGames <= 15 && aggressiveGames % 5 === 0)) {
+        aggressiveDetails.push({ game: aggressiveGames, dupr: currentDupr, gain: avgGain, rel: currentRel });
+      }
     }
-    return { safe: safeGames, aggressive: aggGames, safeRange: `${Math.max(1,Math.floor(safeGames*0.8))}-${Math.ceil(safeGames*1.3)}`, aggressiveRange: `${Math.max(1,Math.floor(aggGames*0.7))}-${Math.ceil(aggGames*1.4)}` };
+    
+    return { 
+      safe: safeGames, 
+      aggressive: aggressiveGames,
+      safeRange: `${Math.max(1, Math.floor(safeGames * 0.8))}-${Math.ceil(safeGames * 1.3)}`,
+      aggressiveRange: `${Math.max(1, Math.floor(aggressiveGames * 0.7))}-${Math.ceil(aggressiveGames * 1.4)}`,
+      safeDetails,
+      aggressiveDetails
+    };
+  };
+  
+  const gameEstimates = estimateGames(pathCurrent.dupr, pathCurrent.reliability, targetDupr);
+  
+  // Determine recommended bracket (play where you're at the BOTTOM = underdog)
+  const getBracket = (dupr) => {
+    if (dupr <= 3.0) return { play: '3.0 - 3.5', avoid: '2.5 - 3.0', oppAvg: 3.25 };
+    if (dupr <= 3.5) return { play: '3.5 - 4.0', avoid: '3.0 - 3.5', oppAvg: 3.75 };
+    if (dupr <= 4.0) return { play: '4.0 - 4.5', avoid: '3.5 - 4.0', oppAvg: 4.25 };
+    if (dupr <= 4.5) return { play: '4.5 - 5.0', avoid: '4.0 - 4.5', oppAvg: 4.75 };
+    return { play: '5.0 - 5.5', avoid: '4.5 - 5.0', oppAvg: 5.25 };
   };
 
-  const gameEstimates = estimateGames(pathCurrent.dupr, pathCurrent.reliability, targetDupr);
-  const getBracket = (d) => d <= 3.0 ? {play:'3.0-3.5',avoid:'2.5-3.0',oppAvg:3.25} : d <= 3.5 ? {play:'3.5-4.0',avoid:'3.0-3.5',oppAvg:3.75} : d <= 4.0 ? {play:'4.0-4.5',avoid:'3.5-4.0',oppAvg:4.25} : d <= 4.5 ? {play:'4.5-5.0',avoid:'4.0-4.5',oppAvg:4.75} : {play:'5.0-5.5',avoid:'4.5-5.0',oppAvg:5.25};
   const bracket = getBracket(pathCurrent.dupr);
-  const getAggBracket = (d) => d <= 3.0 ? {play:'3.5-4.0',oppAvg:3.75} : d <= 3.5 ? {play:'4.0-4.5',oppAvg:4.25} : d <= 4.0 ? {play:'4.5-5.0',oppAvg:4.75} : d <= 4.5 ? {play:'5.0-5.5',oppAvg:5.25} : {play:'5.5+',oppAvg:5.75};
-  const aggBracket = getAggBracket(pathCurrent.dupr);
-  const partnerMid = pathCurrent.dupr + 0.2;
-  const projTeamAvg = (pathCurrent.dupr + partnerMid) / 2;
-  const projGap = projTeamAvg - bracket.oppAvg;
-  const projExpMargin = projGap * 12;
-  const aggGap = projTeamAvg - aggBracket.oppAvg;
-  const aggExpMargin = aggGap * 12;
+  
+  // Aggressive bracket (one up from recommended)
+  const getAggressiveBracket = (dupr) => {
+    if (dupr <= 3.0) return { play: '3.5 - 4.0', oppAvg: 3.75 };
+    if (dupr <= 3.5) return { play: '4.0 - 4.5', oppAvg: 4.25 };
+    if (dupr <= 4.0) return { play: '4.5 - 5.0', oppAvg: 4.75 };
+    if (dupr <= 4.5) return { play: '5.0 - 5.5', oppAvg: 5.25 };
+    return { play: '5.5+', oppAvg: 5.75 };
+  };
+  const aggressiveBracket = getAggressiveBracket(pathCurrent.dupr);
+  
+  const partnerRange = {
+    low: Math.max(2.0, pathCurrent.dupr + 0.05),
+    high: Math.min(8.0, pathCurrent.dupr + 0.35)
+  };
+  
+  // Calculate expected scenario for SAFE path
+  const partnerMid = (partnerRange.low + partnerRange.high) / 2;
+  const projectedTeamAvg = (pathCurrent.dupr + partnerMid) / 2;
+  const projectedGap = projectedTeamAvg - bracket.oppAvg;
+  const projectedExpectedMargin = projectedGap * 12;
+  
+  // Calculate expected scenario for AGGRESSIVE path
+  const aggressiveGap = projectedTeamAvg - aggressiveBracket.oppAvg;
+  const aggressiveExpectedMargin = aggressiveGap * 12;
 
+  // Custom Rating Input Component
   const DuprInput = ({ value, onChange, label }) => {
-    const adjust = (d) => onChange(Math.round(Math.max(2.0, Math.min(8.0, value + d)) * 100) / 100);
+    const adjust = (delta) => {
+      const newVal = Math.max(2.0, Math.min(8.0, value + delta));
+      onChange(Math.round(newVal * 100) / 100);
+    };
+    
     return (
       <div>
         <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{label}</label>
-        <div className="flex items-center bg-white border-2 border-gray-200 rounded-xl overflow-hidden hover:border-blue-300 focus-within:border-blue-500">
-          <button onClick={() => adjust(-0.01)} className="px-4 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 text-xl font-medium">−</button>
-          <input type="text" value={value.toFixed(2)} onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 2.0 && v <= 8.0) onChange(v); }} className="w-full text-center py-3 text-2xl font-bold text-gray-800 focus:outline-none bg-transparent" />
-          <button onClick={() => adjust(0.01)} className="px-4 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 text-xl font-medium">+</button>
+        <div className="flex items-center bg-white border-2 border-gray-200 rounded-xl overflow-hidden transition-all duration-200 hover:border-blue-300 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-100">
+          <button
+            onClick={() => adjust(-0.01)}
+            className="px-4 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all duration-150 text-xl font-medium active:scale-95"
+          >
+            −
+          </button>
+          <input
+            type="text"
+            value={value.toFixed(2)}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              if (!isNaN(v) && v >= 2.0 && v <= 8.0) onChange(v);
+            }}
+            className="w-full text-center py-3 text-2xl font-bold text-gray-800 focus:outline-none bg-transparent"
+          />
+          <button
+            onClick={() => adjust(0.01)}
+            className="px-4 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all duration-150 text-xl font-medium active:scale-95"
+          >
+            +
+          </button>
         </div>
       </div>
     );
   };
 
+  // Reliability Slider Component
   const ReliabilitySlider = ({ value, onChange, label }) => {
     const [localValue, setLocalValue] = useState(String(value));
     const [isFocused, setIsFocused] = useState(false);
-    useEffect(() => { if (!isFocused) setLocalValue(String(value)); }, [value, isFocused]);
-    const getColor = () => value < 30 ? 'from-orange-400 to-orange-500' : value < 60 ? 'from-yellow-400 to-yellow-500' : 'from-green-400 to-green-500';
-    const handleBlur = () => { setIsFocused(false); const n = parseInt(localValue); if (isNaN(n) || n < 1) { onChange(1); setLocalValue('1'); } else if (n > 100) { onChange(100); setLocalValue('100'); } else { onChange(n); setLocalValue(String(n)); } };
+
+    useEffect(() => {
+      if (!isFocused) {
+        setLocalValue(String(value));
+      }
+    }, [value, isFocused]);
+    
+    const getColor = () => {
+      if (value < 30) return 'from-orange-400 to-orange-500';
+      if (value < 60) return 'from-yellow-400 to-yellow-500';
+      return 'from-green-400 to-green-500';
+    };
+
+    const handleInputChange = (e) => {
+      setLocalValue(e.target.value);
+    };
+
+    const handleFocus = (e) => {
+      setIsFocused(true);
+      e.target.select();
+    };
+
+    const handleBlur = () => {
+      setIsFocused(false);
+      const num = parseInt(localValue);
+      if (isNaN(num) || num < 1) {
+        onChange(1);
+        setLocalValue('1');
+      } else if (num > 100) {
+        onChange(100);
+        setLocalValue('100');
+      } else {
+        onChange(num);
+        setLocalValue(String(num));
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter') {
+        e.target.blur();
+      }
+    };
+
+    const handleSliderChange = (e) => {
+      const v = parseInt(e.target.value);
+      onChange(v);
+      setLocalValue(String(v));
+    };
+    
     return (
       <div>
         <div className="flex justify-between items-center mb-2">
           <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</label>
           <div className="flex items-center gap-1">
-            <input type="text" inputMode="numeric" value={localValue} onChange={(e) => setLocalValue(e.target.value)} onFocus={(e) => { setIsFocused(true); e.target.select(); }} onBlur={handleBlur} onKeyDown={(e) => e.key === 'Enter' && e.target.blur()} className={`w-14 text-center text-sm font-bold px-2 py-1 rounded-full border-2 border-transparent focus:outline-none focus:border-blue-400 ${value < 30 ? 'bg-orange-100 text-orange-600' : value < 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-600'}`} />
+            <input
+              type="text"
+              inputMode="numeric"
+              value={localValue}
+              onChange={handleInputChange}
+              onFocus={handleFocus}
+              onBlur={handleBlur}
+              onKeyDown={handleKeyDown}
+              className={`w-14 text-center text-sm font-bold px-2 py-1 rounded-full border-2 border-transparent focus:outline-none focus:border-blue-400 transition-colors ${
+                value < 30 ? 'bg-orange-100 text-orange-600' :
+                value < 60 ? 'bg-yellow-100 text-yellow-700' :
+                'bg-green-100 text-green-600'
+              }`}
+            />
             <span className="text-sm font-bold text-gray-400">%</span>
           </div>
         </div>
         <div className="relative">
-          <div className="h-3 bg-gray-200 rounded-full overflow-hidden"><div className={`h-full bg-gradient-to-r ${getColor()} rounded-full`} style={{ width: `${value}%` }} /></div>
-          <input type="range" min="1" max="100" value={value} onChange={(e) => { const v = parseInt(e.target.value); onChange(v); setLocalValue(String(v)); }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+          <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+            <div 
+              className={`h-full bg-gradient-to-r ${getColor()} transition-all duration-300 rounded-full`}
+              style={{ width: `${value}%` }}
+            />
+          </div>
+          <input
+            type="range"
+            min="1"
+            max="100"
+            value={value}
+            onChange={handleSliderChange}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          />
         </div>
-        <div className="flex justify-between text-xs text-gray-400 mt-1"><span>New</span><span>Established</span></div>
+        <div className="flex justify-between text-xs text-gray-400 mt-1">
+          <span>New</span>
+          <span>Established</span>
+        </div>
       </div>
     );
   };
 
+  // Player Card Component
   const PlayerCard = ({ title, player, setPlayer, colorClass, icon }) => (
-    <div className={`bg-white rounded-2xl border-2 ${colorClass} p-5 shadow-sm hover:shadow-md transition-all`}>
-      <div className="flex items-center gap-2 mb-4"><span className="text-lg">{icon}</span><h3 className="font-bold text-gray-800">{title}</h3></div>
+    <div className={`bg-white rounded-2xl border-2 ${colorClass} p-5 shadow-sm hover:shadow-md transition-all duration-300`}>
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-lg">{icon}</span>
+        <h3 className="font-bold text-gray-800">{title}</h3>
+      </div>
       <div className="space-y-5">
-        <DuprInput value={player.dupr} onChange={(v) => setPlayer({ ...player, dupr: v })} label="Rating" />
-        <ReliabilitySlider value={player.reliability} onChange={(v) => setPlayer({ ...player, reliability: v })} label="Reliability" />
+        <DuprInput 
+          value={player.dupr} 
+          onChange={(v) => setPlayer({ ...player, dupr: v })}
+          label="Rating"
+        />
+        <ReliabilitySlider 
+          value={player.reliability} 
+          onChange={(v) => setPlayer({ ...player, reliability: v })}
+          label="Reliability"
+        />
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-4 md:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-4 md:p-6" style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif" }}>
+      {/* Header */}
       <div className="max-w-2xl mx-auto mb-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-14 h-14">
-            <svg viewBox="0 0 56 56" fill="none" className="w-full h-full drop-shadow-md">
-              <ellipse cx="22" cy="22" rx="14" ry="16" fill="url(#pg)" /><ellipse cx="22" cy="22" rx="14" ry="16" stroke="#1e3a8a" strokeWidth="2" fill="none"/>
-              <rect x="17" y="36" width="10" height="14" rx="3" fill="url(#hg)" stroke="#1e3a8a" strokeWidth="2"/>
-              <circle cx="42" cy="16" r="12" fill="url(#bg)" stroke="#c2410c" strokeWidth="2"/>
+          {/* Paddle + Ball Logo */}
+          <div className="w-14 h-14 relative">
+            <svg viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full drop-shadow-md">
+              <ellipse cx="22" cy="22" rx="14" ry="16" fill="url(#paddleGrad)" />
+              <ellipse cx="22" cy="22" rx="14" ry="16" stroke="#1e3a8a" strokeWidth="2" fill="none"/>
+              <circle cx="17" cy="16" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="22" cy="13" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="27" cy="16" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="15" cy="22" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="22" cy="22" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="29" cy="22" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="17" cy="28" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="22" cy="31" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <circle cx="27" cy="28" r="2" fill="#1e3a8a" fillOpacity="0.2"/>
+              <rect x="17" y="36" width="10" height="14" rx="3" fill="url(#handleGrad)" stroke="#1e3a8a" strokeWidth="2"/>
+              <circle cx="42" cy="16" r="12" fill="url(#ballGrad)" stroke="#c2410c" strokeWidth="2"/>
+              <circle cx="38" cy="12" r="1.5" fill="#c2410c" fillOpacity="0.3"/>
+              <circle cx="43" cy="9" r="1.5" fill="#c2410c" fillOpacity="0.3"/>
+              <circle cx="47" cy="13" r="1.5" fill="#c2410c" fillOpacity="0.3"/>
+              <circle cx="38" cy="18" r="1.5" fill="#c2410c" fillOpacity="0.3"/>
+              <circle cx="44" cy="16" r="1.5" fill="#c2410c" fillOpacity="0.3"/>
+              <circle cx="48" cy="19" r="1.5" fill="#c2410c" fillOpacity="0.3"/>
+              <circle cx="41" cy="22" r="1.5" fill="#c2410c" fillOpacity="0.3"/>
               <defs>
-                <linearGradient id="pg" x1="8" y1="6" x2="36" y2="38" gradientUnits="userSpaceOnUse"><stop stopColor="#60a5fa"/><stop offset="1" stopColor="#2563eb"/></linearGradient>
-                <linearGradient id="hg" x1="17" y1="36" x2="27" y2="50" gradientUnits="userSpaceOnUse"><stop stopColor="#1e40af"/><stop offset="1" stopColor="#1e3a8a"/></linearGradient>
-                <linearGradient id="bg" x1="30" y1="4" x2="54" y2="28" gradientUnits="userSpaceOnUse"><stop stopColor="#fde047"/><stop offset="1" stopColor="#facc15"/></linearGradient>
+                <linearGradient id="paddleGrad" x1="8" y1="6" x2="36" y2="38" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#60a5fa"/>
+                  <stop offset="1" stopColor="#2563eb"/>
+                </linearGradient>
+                <linearGradient id="handleGrad" x1="17" y1="36" x2="27" y2="50" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#1e40af"/>
+                  <stop offset="1" stopColor="#1e3a8a"/>
+                </linearGradient>
+                <linearGradient id="ballGrad" x1="30" y1="4" x2="54" y2="28" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#fde047"/>
+                  <stop offset="1" stopColor="#facc15"/>
+                </linearGradient>
               </defs>
             </svg>
           </div>
@@ -162,41 +440,108 @@ function App() {
             <p className="text-sm text-gray-500">Predict your rating change before you play</p>
           </div>
         </div>
+
+        {/* Tab Navigation */}
         <div className="flex bg-white rounded-xl p-1 shadow-sm border border-gray-200">
-          {['simulator','path','tournament'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3 px-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${activeTab === tab ? 'bg-blue-600 text-white shadow-md' : 'text-gray-600 hover:bg-gray-100'}`}>
-              {tab === 'simulator' ? 'Match' : tab === 'path' ? 'Path to Target' : 'Tournament'}
-            </button>
-          ))}
+          <button
+            onClick={() => setActiveTab('simulator')}
+            className={`flex-1 py-3 px-2 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'simulator'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Match
+          </button>
+          <button
+            onClick={() => setActiveTab('path')}
+            className={`flex-1 py-3 px-2 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'path'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Path to Target
+          </button>
+          <button
+            onClick={() => setActiveTab('tournament')}
+            className={`flex-1 py-3 px-2 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'tournament'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Tournament
+          </button>
         </div>
       </div>
 
+      {/* ==================== MATCH SIMULATOR TAB ==================== */}
       {activeTab === 'simulator' && (
         <div className="max-w-2xl mx-auto space-y-6">
+          {/* Your Team Section */}
           <div>
-            <div className="flex items-center gap-2 mb-3"><div className="w-2 h-6 bg-blue-500 rounded-full"></div><h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide">Your Team</h2></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <PlayerCard title="You" player={you} setPlayer={setYou} colorClass="border-blue-200 hover:border-blue-300" icon="👤" />
-              <PlayerCard title="Partner" player={partner} setPlayer={setPartner} colorClass="border-blue-100 hover:border-blue-200" icon="🤝" />
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-6 bg-blue-500 rounded-full"></div>
+              <h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide">Your Team</h2>
             </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-2 mb-3"><div className="w-2 h-6 bg-orange-500 rounded-full"></div><h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide">Opponents</h2></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <PlayerCard title="Opponent 1" player={opp1} setPlayer={setOpp1} colorClass="border-orange-200 hover:border-orange-300" icon="🎯" />
-              <PlayerCard title="Opponent 2" player={opp2} setPlayer={setOpp2} colorClass="border-orange-100 hover:border-orange-200" icon="🎯" />
+              <PlayerCard 
+                title="You" 
+                player={you} 
+                setPlayer={setYou}
+                colorClass="border-blue-200 hover:border-blue-300"
+                icon="👤"
+              />
+              <PlayerCard 
+                title="Partner" 
+                player={partner} 
+                setPlayer={setPartner}
+                colorClass="border-blue-100 hover:border-blue-200"
+                icon="🤝"
+              />
             </div>
           </div>
 
+          {/* Opponents Section */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-6 bg-orange-500 rounded-full"></div>
+              <h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide">Opponents</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <PlayerCard 
+                title="Opponent 1" 
+                player={opp1} 
+                setPlayer={setOpp1}
+                colorClass="border-orange-200 hover:border-orange-300"
+                icon="🎯"
+              />
+              <PlayerCard 
+                title="Opponent 2" 
+                player={opp2} 
+                setPlayer={setOpp2}
+                colorClass="border-orange-100 hover:border-orange-200"
+                icon="🎯"
+              />
+            </div>
+          </div>
+
+          {/* Match Analysis Card */}
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="bg-gradient-to-r from-gray-50 to-white px-5 py-4 border-b border-gray-100">
               <div className="flex justify-between items-center">
                 <h3 className="font-bold text-gray-800">Match Analysis</h3>
-                <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${status === 'UNDERDOG' ? 'bg-green-100 text-green-700 ring-2 ring-green-200' : status === 'FAVORITE' ? 'bg-orange-100 text-orange-700 ring-2 ring-orange-200' : 'bg-gray-100 text-gray-600 ring-2 ring-gray-200'}`}>
+                <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+                  status === 'UNDERDOG' ? 'bg-green-100 text-green-700 ring-2 ring-green-200' :
+                  status === 'FAVORITE' ? 'bg-orange-100 text-orange-700 ring-2 ring-orange-200' :
+                  'bg-gray-100 text-gray-600 ring-2 ring-gray-200'
+                }`}>
                   {status === 'UNDERDOG' ? '↗ UNDERDOG' : status === 'FAVORITE' ? '↘ FAVORITE' : '= EVEN'}
                 </span>
               </div>
             </div>
+            
             <div className="p-5">
               <div className="grid grid-cols-3 gap-3 mb-5">
                 <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 text-center">
@@ -205,57 +550,125 @@ function App() {
                 </div>
                 <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 text-center">
                   <div className="text-xs text-gray-500 font-medium mb-1">Gap</div>
-                  <div className={`text-3xl font-extrabold ${gap < -0.1 ? 'text-green-600' : gap > 0.1 ? 'text-orange-600' : 'text-gray-600'}`}>{gap >= 0 ? '+' : ''}{gap.toFixed(2)}</div>
+                  <div className={`text-3xl font-extrabold ${
+                    gap < -0.1 ? 'text-green-600' : gap > 0.1 ? 'text-orange-600' : 'text-gray-600'
+                  }`}>
+                    {gap >= 0 ? '+' : ''}{gap.toFixed(2)}
+                  </div>
                 </div>
                 <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 text-center">
                   <div className="text-xs text-orange-600 font-medium mb-1">Opponents</div>
                   <div className="text-3xl font-extrabold text-orange-700">{oppAvg.toFixed(2)}</div>
                 </div>
               </div>
+
               <div className="bg-gray-50 rounded-xl p-4 text-center">
                 <span className="text-gray-500">Expected outcome: </span>
-                <span className="font-bold text-gray-800">{Math.abs(gap * 12) < 0.5 ? 'Toss-up game' : `${gap >= 0 ? 'Win' : 'Lose'} by ~${Math.abs(gap * 12).toFixed(0)} points`}</span>
+                <span className="font-bold text-gray-800">
+                  {Math.abs(gap * 12) < 0.5 ? 'Toss-up game' : 
+                    `${gap >= 0 ? 'Win' : 'Lose'} by ~${Math.abs(gap * 12).toFixed(0)} points`
+                  }
+                </span>
               </div>
             </div>
           </div>
 
+          {/* Score Input Section */}
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="bg-gradient-to-r from-gray-50 to-white px-5 py-4 border-b border-gray-100">
               <h3 className="font-bold text-gray-800">Score Calculator</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Enter the final score to see your rating change</p>
             </div>
+            
             <div className="p-6">
+              {/* Score Input */}
               <div className="flex items-center justify-center gap-4 mb-6">
+                {/* Your Score */}
                 <div className="text-center">
                   <div className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">Your Team</div>
                   <div className="flex items-center bg-blue-50 rounded-2xl p-2 border-2 border-blue-200">
-                    <button onClick={() => setYourScore(Math.max(0, yourScore - 1))} className="w-12 h-12 rounded-xl bg-white text-blue-600 font-bold text-2xl shadow-sm hover:bg-blue-600 hover:text-white transition-all">−</button>
+                    <button
+                      onClick={() => setYourScore(Math.max(0, yourScore - 1))}
+                      className="w-12 h-12 rounded-xl bg-white text-blue-600 font-bold text-2xl shadow-sm hover:shadow-md hover:bg-blue-600 hover:text-white transition-all duration-200 active:scale-95"
+                    >
+                      −
+                    </button>
                     <span className="w-16 text-center text-4xl font-extrabold text-blue-700">{yourScore}</span>
-                    <button onClick={() => setYourScore(Math.min(15, yourScore + 1))} className="w-12 h-12 rounded-xl bg-white text-blue-600 font-bold text-2xl shadow-sm hover:bg-blue-600 hover:text-white transition-all">+</button>
+                    <button
+                      onClick={() => setYourScore(Math.min(15, yourScore + 1))}
+                      className="w-12 h-12 rounded-xl bg-white text-blue-600 font-bold text-2xl shadow-sm hover:shadow-md hover:bg-blue-600 hover:text-white transition-all duration-200 active:scale-95"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
-                <div className="flex flex-col items-center gap-1 pt-6"><div className="w-4 h-4 rounded-full bg-gray-300"></div><div className="text-gray-400 font-bold text-lg">vs</div><div className="w-4 h-4 rounded-full bg-gray-300"></div></div>
+
+                {/* Divider */}
+                <div className="flex flex-col items-center gap-1 pt-6">
+                  <div className="w-4 h-4 rounded-full bg-gray-300"></div>
+                  <div className="text-gray-400 font-bold text-lg">vs</div>
+                  <div className="w-4 h-4 rounded-full bg-gray-300"></div>
+                </div>
+
+                {/* Their Score */}
                 <div className="text-center">
                   <div className="text-xs font-semibold text-orange-600 uppercase tracking-wide mb-2">Opponents</div>
                   <div className="flex items-center bg-orange-50 rounded-2xl p-2 border-2 border-orange-200">
-                    <button onClick={() => setTheirScore(Math.max(0, theirScore - 1))} className="w-12 h-12 rounded-xl bg-white text-orange-600 font-bold text-2xl shadow-sm hover:bg-orange-600 hover:text-white transition-all">−</button>
+                    <button
+                      onClick={() => setTheirScore(Math.max(0, theirScore - 1))}
+                      className="w-12 h-12 rounded-xl bg-white text-orange-600 font-bold text-2xl shadow-sm hover:shadow-md hover:bg-orange-600 hover:text-white transition-all duration-200 active:scale-95"
+                    >
+                      −
+                    </button>
                     <span className="w-16 text-center text-4xl font-extrabold text-orange-700">{theirScore}</span>
-                    <button onClick={() => setTheirScore(Math.min(15, theirScore + 1))} className="w-12 h-12 rounded-xl bg-white text-orange-600 font-bold text-2xl shadow-sm hover:bg-orange-600 hover:text-white transition-all">+</button>
+                    <button
+                      onClick={() => setTheirScore(Math.min(15, theirScore + 1))}
+                      className="w-12 h-12 rounded-xl bg-white text-orange-600 font-bold text-2xl shadow-sm hover:shadow-md hover:bg-orange-600 hover:text-white transition-all duration-200 active:scale-95"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
               </div>
+
+              {/* Result Display */}
               {(() => {
                 const change = calcChange(you.dupr, you.reliability, partner.dupr, partner.reliability, oppAvg, yourScore, theirScore);
                 const isWin = yourScore > theirScore;
                 const isTie = yourScore === theirScore;
+                const isPositive = change > 0.005;
+                const isNegative = change < -0.005;
+                
                 return (
-                  <div className={`rounded-2xl p-6 text-center ${isTie ? 'bg-gray-50 border-2 border-gray-200' : isWin ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200' : 'bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-200'}`}>
-                    {isTie ? <div className="text-gray-500 font-medium">Enter a final score above</div> : (
+                  <div className={`rounded-2xl p-6 text-center ${
+                    isTie ? 'bg-gray-50 border-2 border-gray-200' :
+                    isWin ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200' : 
+                    'bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-200'
+                  }`}>
+                    {isTie ? (
+                      <div className="text-gray-500 font-medium">Enter a final score above</div>
+                    ) : (
                       <>
-                        <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-bold mb-3 ${isWin ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>{isWin ? '🎉 WIN' : '😔 LOSS'}</div>
-                        <div className={`text-5xl font-extrabold mb-2 ${change > 0.005 ? 'text-green-600' : change < -0.005 ? 'text-red-500' : 'text-gray-500'}`}>{change >= 0 ? '+' : ''}{change.toFixed(3)}</div>
+                        <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-bold mb-3 ${
+                          isWin ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'
+                        }`}>
+                          {isWin ? '🎉 WIN' : '😔 LOSS'}
+                        </div>
+                        
+                        <div className={`text-5xl font-extrabold mb-2 ${
+                          isPositive ? 'text-green-600' : isNegative ? 'text-red-500' : 'text-gray-500'
+                        }`}>
+                          {change >= 0 ? '+' : ''}{change.toFixed(3)}
+                        </div>
+                        
                         <div className="flex items-center justify-center gap-3 text-lg">
-                          <span className="text-gray-400">{you.dupr.toFixed(2)}</span><span className="text-gray-300">→</span>
-                          <span className={`font-bold ${change > 0.005 ? 'text-green-700' : change < -0.005 ? 'text-red-600' : 'text-gray-700'}`}>{(you.dupr + change).toFixed(2)}</span>
+                          <span className="text-gray-400">{you.dupr.toFixed(2)}</span>
+                          <span className="text-gray-300">→</span>
+                          <span className={`font-bold ${
+                            isPositive ? 'text-green-700' : isNegative ? 'text-red-600' : 'text-gray-700'
+                          }`}>
+                            {(you.dupr + change).toFixed(2)}
+                          </span>
                         </div>
                       </>
                     )}
@@ -265,168 +678,824 @@ function App() {
             </div>
           </div>
 
+          {/* Quick Reference */}
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            <button onClick={() => setShowQuickRef(!showQuickRef)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50">
-              <div className="flex items-center gap-2"><span className="text-lg">📊</span><span className="font-bold text-gray-800">Quick Reference</span></div>
-              <span className={`text-gray-400 transition-transform ${showQuickRef ? 'rotate-180' : ''}`}>▼</span>
+            <button 
+              onClick={() => setShowQuickRef(!showQuickRef)}
+              className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📊</span>
+                <span className="font-bold text-gray-800">Quick Reference</span>
+                <span className="text-xs text-gray-400">Common score outcomes</span>
+              </div>
+              <span className={`text-gray-400 transition-transform duration-200 ${showQuickRef ? 'rotate-180' : ''}`}>▼</span>
             </button>
+            
             {showQuickRef && (
-              <div className="border-t border-gray-100 grid grid-cols-2 divide-x divide-gray-100">
-                <div>
-                  <div className="px-4 py-2 bg-green-50 border-b border-green-100"><span className="text-xs font-bold text-green-700 uppercase">Wins</span></div>
-                  {scenarios.filter(s => s.us > s.them).map(({ us, them }, i) => {
-                    const c = calcChange(you.dupr, you.reliability, partner.dupr, partner.reliability, oppAvg, us, them);
-                    return <div key={i} onClick={() => { setYourScore(us); setTheirScore(them); }} className="flex justify-between px-4 py-2.5 hover:bg-green-50 cursor-pointer border-b border-gray-50"><span className="font-mono text-sm font-semibold text-gray-700">{us}-{them}</span><span className="font-mono font-bold text-green-600">+{c.toFixed(3)}</span></div>;
-                  })}
-                </div>
-                <div>
-                  <div className="px-4 py-2 bg-red-50 border-b border-red-100"><span className="text-xs font-bold text-red-700 uppercase">Losses</span></div>
-                  {scenarios.filter(s => s.us < s.them).map(({ us, them }, i) => {
-                    const c = calcChange(you.dupr, you.reliability, partner.dupr, partner.reliability, oppAvg, us, them);
-                    return <div key={i} onClick={() => { setYourScore(us); setTheirScore(them); }} className="flex justify-between px-4 py-2.5 hover:bg-red-50 cursor-pointer border-b border-gray-50"><span className="font-mono text-sm font-semibold text-gray-700">{us}-{them}</span><span className="font-mono font-bold text-red-500">{c.toFixed(3)}</span></div>;
-                  })}
+              <div className="border-t border-gray-100">
+                <div className="grid grid-cols-2 divide-x divide-gray-100">
+                  {/* Wins Column */}
+                  <div>
+                    <div className="px-4 py-2 bg-green-50 border-b border-green-100">
+                      <span className="text-xs font-bold text-green-700 uppercase">Wins</span>
+                    </div>
+                    {scenarios.filter(s => s.us > s.them).map(({ us, them }, idx) => {
+                      const change = calcChange(you.dupr, you.reliability, partner.dupr, partner.reliability, oppAvg, us, them);
+                      return (
+                        <div 
+                          key={idx}
+                          onClick={() => { setYourScore(us); setTheirScore(them); }}
+                          className="flex items-center justify-between px-4 py-2.5 hover:bg-green-50 cursor-pointer transition-colors border-b border-gray-50 last:border-0"
+                        >
+                          <span className="font-mono text-sm font-semibold text-gray-700">{us}-{them}</span>
+                          <span className="font-mono font-bold text-green-600">+{change.toFixed(3)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Losses Column */}
+                  <div>
+                    <div className="px-4 py-2 bg-red-50 border-b border-red-100">
+                      <span className="text-xs font-bold text-red-700 uppercase">Losses</span>
+                    </div>
+                    {scenarios.filter(s => s.us < s.them).map(({ us, them }, idx) => {
+                      const change = calcChange(you.dupr, you.reliability, partner.dupr, partner.reliability, oppAvg, us, them);
+                      return (
+                        <div 
+                          key={idx}
+                          onClick={() => { setYourScore(us); setTheirScore(them); }}
+                          className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50 cursor-pointer transition-colors border-b border-gray-50 last:border-0"
+                        >
+                          <span className="font-mono text-sm font-semibold text-gray-700">{us}-{them}</span>
+                          <span className="font-mono font-bold text-red-500">{change.toFixed(3)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}
           </div>
+
+          {/* Strategy Tips */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <h3 className="font-bold text-gray-800 mb-4">💡 Strategy Tips</h3>
+            <div className="space-y-3">
+              {status === 'UNDERDOG' && (
+                <>
+                  <div className="flex gap-3 p-3 bg-green-50 rounded-xl">
+                    <span className="text-green-500 text-lg">✓</span>
+                    <span className="text-green-800 text-sm">Great position! Even a close loss won't hurt your rating much.</span>
+                  </div>
+                  <div className="flex gap-3 p-3 bg-green-50 rounded-xl">
+                    <span className="text-green-500 text-lg">✓</span>
+                    <span className="text-green-800 text-sm">A win here gives you bonus gains from the underdog multiplier.</span>
+                  </div>
+                </>
+              )}
+              {status === 'FAVORITE' && (
+                <>
+                  <div className="flex gap-3 p-3 bg-orange-50 rounded-xl">
+                    <span className="text-orange-500 text-lg">⚠</span>
+                    <span className="text-orange-800 text-sm">Be careful! If you lose, you'll get a 2× penalty multiplier.</span>
+                  </div>
+                  <div className="flex gap-3 p-3 bg-orange-50 rounded-xl">
+                    <span className="text-orange-500 text-lg">⚠</span>
+                    <span className="text-orange-800 text-sm">Try to win decisively to make this matchup worth the risk.</span>
+                  </div>
+                </>
+              )}
+              {status === 'EVEN' && (
+                <div className="flex gap-3 p-3 bg-gray-50 rounded-xl">
+                  <span className="text-gray-400 text-lg">•</span>
+                  <span className="text-gray-700 text-sm">Evenly matched game — no special multipliers apply. May the best team win!</span>
+                </div>
+              )}
+              {partner.reliability < you.reliability && (
+                <div className="flex gap-3 p-3 bg-blue-50 rounded-xl">
+                  <span className="text-blue-500 text-lg">ℹ</span>
+                  <span className="text-blue-800 text-sm">Your partner has lower reliability — they absorb more credit/blame (you receive 85% adjustment).</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="text-center text-xs text-gray-400 py-4">
+            Results may vary • Results may vary ±0.01
+          </div>
         </div>
       )}
 
+      {/* ==================== PATH TO TARGET TAB ==================== */}
       {activeTab === 'path' && (
         <div className="max-w-2xl mx-auto space-y-6">
+          {/* Input Section */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
             <h3 className="font-bold text-gray-800 mb-4">📍 Your Starting Point</h3>
             <div className="space-y-5">
-              <DuprInput value={pathCurrent.dupr} onChange={(v) => setPathCurrent({ ...pathCurrent, dupr: v })} label="Current Rating" />
-              <ReliabilitySlider value={pathCurrent.reliability} onChange={(v) => setPathCurrent({ ...pathCurrent, reliability: v })} label="Current Reliability" />
+              <DuprInput 
+                value={pathCurrent.dupr} 
+                onChange={(v) => setPathCurrent({ ...pathCurrent, dupr: v })}
+                label="Current Rating"
+              />
+              <ReliabilitySlider 
+                value={pathCurrent.reliability} 
+                onChange={(v) => setPathCurrent({ ...pathCurrent, reliability: v })}
+                label="Current Reliability"
+              />
             </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
             <h3 className="font-bold text-gray-800 mb-4">🎯 Your Goal</h3>
-            <DuprInput value={targetDupr} onChange={setTargetDupr} label="Target Rating" />
+            <DuprInput 
+              value={targetDupr} 
+              onChange={setTargetDupr}
+              label="Target Rating"
+            />
             <div className="mt-4 text-center">
               <span className="text-gray-500">Points needed: </span>
-              <span className={`text-2xl font-bold ${pointsNeeded > 0 ? 'text-blue-600' : 'text-green-600'}`}>{pointsNeeded > 0 ? '+' : ''}{pointsNeeded.toFixed(2)}</span>
+              <span className={`text-2xl font-bold ${pointsNeeded > 0 ? 'text-blue-600' : 'text-green-600'}`}>
+                {pointsNeeded > 0 ? '+' : ''}{pointsNeeded.toFixed(2)}
+              </span>
             </div>
           </div>
 
+          {/* Your Situation */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
             <h3 className="font-bold text-gray-800 mb-4">📊 Your Situation</h3>
+            
             {isLowReliability ? (
               <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-200 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-2"><span className="text-2xl">⚡</span><span className="font-bold text-amber-800">YOUR WINDOW IS NOW</span></div>
-                <p className="text-amber-900 text-sm">New players gain 2-3x more per game. Your first 5 games could be worth as much as your next 15. <strong>Make them count!</strong></p>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-2xl">⚡</span>
+                  <span className="font-bold text-amber-800">YOUR WINDOW IS NOW</span>
+                </div>
+                <p className="text-amber-900 text-sm leading-relaxed">
+                  New players can gain (or lose) 2-3x more per game than established players. 
+                  Your first 5 games could be worth as much as your next 15. <strong>Make them count!</strong>
+                </p>
               </div>
             ) : (
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-2"><span className="text-2xl">🐢</span><span className="font-bold text-blue-800">STEADY CLIMB</span></div>
-                <p className="text-blue-900 text-sm">Your rating is established — it moves slowly now. <strong>Expect {gameEstimates.safeRange} games of consistent play.</strong></p>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-2xl">🐢</span>
+                  <span className="font-bold text-blue-800">STEADY CLIMB</span>
+                </div>
+                <p className="text-blue-900 text-sm leading-relaxed">
+                  Your rating is established — it moves slowly now. This protects you from big drops, 
+                  but also means gains are smaller. <strong>Expect {gameEstimates.safeRange} games of consistent play.</strong>
+                </p>
               </div>
             )}
           </div>
 
+          {/* Choose Your Path */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-            <h3 className="font-bold text-gray-800 mb-4">🎯 Strategy</h3>
+            <h3 className="font-bold text-gray-800 mb-4">🎯 Choose Your Strategy</h3>
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Safe Path */}
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-3"><span className="text-2xl">🛡️</span><span className="font-bold text-blue-800">SAFE PATH</span></div>
-                <div className="bg-white/60 rounded-lg p-3 mb-3 text-center">
-                  <div className="text-xs text-blue-600 font-medium">PLAY IN</div>
-                  <div className="text-xl font-extrabold text-blue-700">{bracket.play}</div>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-2xl">🛡️</span>
+                  <span className="font-bold text-blue-800">SAFE PATH</span>
                 </div>
-                <div className="text-sm space-y-1">
-                  <div className="flex justify-between"><span className="text-blue-700">Underdog by:</span><span className="font-bold text-blue-800">~{Math.abs(projGap).toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-blue-700">Expected:</span><span className="font-bold text-blue-800">Lose by {Math.abs(projExpMargin).toFixed(0)}</span></div>
+                
+                <div className="bg-white/60 rounded-lg p-3 mb-3">
+                  <div className="text-center">
+                    <div className="text-xs text-blue-600 font-medium">PLAY IN</div>
+                    <div className="text-xl font-extrabold text-blue-700">{bracket.play}</div>
+                    <div className="text-xs text-blue-500 mt-1">(assuming ~{bracket.oppAvg.toFixed(2)} avg opponents)</div>
+                  </div>
                 </div>
+                
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-blue-700">Underdog by:</span>
+                    <span className="font-bold text-blue-800">~{Math.abs(projectedGap).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-700">Expected margin:</span>
+                    <span className="font-bold text-blue-800">Lose by {Math.abs(projectedExpectedMargin).toFixed(0)}</span>
+                  </div>
+                </div>
+                
+                <div className="mt-3 pt-3 border-t border-blue-200">
+                  {(() => {
+                    const k = 5 * Math.exp(-pathCurrent.reliability / 45);
+                    const mult = Math.abs(projectedGap) > 0.1 ? 1 + Math.abs(projectedGap) : 1;
+                    const expected = projectedExpectedMargin;
+                    
+                    // Generate all scenarios
+                    const scenarios = [
+                      { score: 'Win 11-5', margin: 6 },
+                      { score: 'Win 11-7', margin: 4 },
+                      { score: 'Win 11-9', margin: 2 },
+                      { score: 'Lose 9-11', margin: -2 },
+                      { score: 'Lose 7-11', margin: -4 },
+                      { score: 'Lose 5-11', margin: -6 },
+                      { score: 'Lose 3-11', margin: -8 },
+                    ];
+                    
+                    // Calculate changes and find where gains become losses
+                    const withChanges = scenarios.map(s => {
+                      const perf = s.margin - expected;
+                      const change = 0.006 * k * perf * mult;
+                      return { ...s, change, isGain: change >= 0 };
+                    });
+                    
+                    // Find the last gaining score for the insight
+                    const lastGain = withChanges.filter(s => s.isGain).pop();
+                    const firstLoss = withChanges.find(s => !s.isGain);
+                    
+                    return (
+                      <div className="space-y-1 text-xs">
+                        {withChanges.map((s, idx) => {
+                          const isGain = s.isGain;
+                          const showDivider = idx > 0 && withChanges[idx-1].isGain && !isGain;
+                          
+                          return (
+                            <div key={idx}>
+                              {showDivider && (
+                                <div className="border-t border-blue-300 my-2"></div>
+                              )}
+                              <div className={`flex justify-between items-center py-0.5 ${isGain ? 'text-green-700' : 'text-red-600'}`}>
+                                <span className="font-medium">{s.score}</span>
+                                <span className="font-bold font-mono">{s.change >= 0 ? '+' : ''}{s.change.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        
+                        {lastGain && firstLoss && (
+                          <div className="mt-2 pt-2 border-t border-blue-200">
+                            <div className="text-blue-800 font-medium text-center">
+                              🎯 Stay above {firstLoss.score.replace('Lose ', '')} to protect your rating
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+                
                 <div className="mt-3 bg-blue-100 rounded-lg p-2 text-center">
-                  <span className="text-blue-800 text-sm font-semibold">~{gameEstimates.safeRange} games</span>
+                  <span className="text-blue-800 text-sm font-semibold">~{gameEstimates.safeRange} games to target</span>
                 </div>
               </div>
 
+              {/* Aggressive Path */}
               <div className="bg-gradient-to-br from-orange-50 to-red-50 border-2 border-orange-300 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-3"><span className="text-2xl">🚀</span><span className="font-bold text-orange-800">AGGRESSIVE</span></div>
-                <div className="bg-white/60 rounded-lg p-3 mb-3 text-center">
-                  <div className="text-xs text-orange-600 font-medium">PLAY UP IN</div>
-                  <div className="text-xl font-extrabold text-orange-700">{aggBracket.play}</div>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-2xl">🚀</span>
+                  <span className="font-bold text-orange-800">AGGRESSIVE PATH</span>
                 </div>
-                <div className="text-sm space-y-1">
-                  <div className="flex justify-between"><span className="text-orange-700">Underdog by:</span><span className="font-bold text-orange-800">~{Math.abs(aggGap).toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-orange-700">Expected:</span><span className="font-bold text-orange-800">Lose by {Math.abs(aggExpMargin).toFixed(0)}</span></div>
+                
+                <div className="bg-white/60 rounded-lg p-3 mb-3">
+                  <div className="text-center">
+                    <div className="text-xs text-orange-600 font-medium">PLAY UP IN</div>
+                    <div className="text-xl font-extrabold text-orange-700">{aggressiveBracket.play}</div>
+                    <div className="text-xs text-orange-500 mt-1">(assuming ~{aggressiveBracket.oppAvg.toFixed(2)} avg opponents)</div>
+                  </div>
                 </div>
+                
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-orange-700">Underdog by:</span>
+                    <span className="font-bold text-orange-800">~{Math.abs(aggressiveGap).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-orange-700">Expected margin:</span>
+                    <span className="font-bold text-orange-800">Lose by {Math.abs(aggressiveExpectedMargin).toFixed(0)}</span>
+                  </div>
+                </div>
+                
+                <div className="mt-3 pt-3 border-t border-orange-200">
+                  {(() => {
+                    const k = 5 * Math.exp(-pathCurrent.reliability / 45);
+                    const mult = Math.abs(aggressiveGap) > 0.1 ? 1 + Math.abs(aggressiveGap) : 1;
+                    const expected = aggressiveExpectedMargin;
+                    
+                    // Generate all scenarios - more losses since playing up
+                    const scenarios = [
+                      { score: 'Win 11-7', margin: 4 },
+                      { score: 'Win 11-9', margin: 2 },
+                      { score: 'Lose 9-11', margin: -2 },
+                      { score: 'Lose 7-11', margin: -4 },
+                      { score: 'Lose 5-11', margin: -6 },
+                      { score: 'Lose 3-11', margin: -8 },
+                      { score: 'Lose 1-11', margin: -10 },
+                    ];
+                    
+                    // Calculate changes and find where gains become losses
+                    const withChanges = scenarios.map(s => {
+                      const perf = s.margin - expected;
+                      const change = 0.006 * k * perf * mult;
+                      return { ...s, change, isGain: change >= 0 };
+                    });
+                    
+                    // Find the last gaining score for the insight
+                    const lastGain = withChanges.filter(s => s.isGain).pop();
+                    const firstLoss = withChanges.find(s => !s.isGain);
+                    
+                    return (
+                      <div className="space-y-1 text-xs">
+                        {withChanges.map((s, idx) => {
+                          const isGain = s.isGain;
+                          const showDivider = idx > 0 && withChanges[idx-1].isGain && !isGain;
+                          
+                          return (
+                            <div key={idx}>
+                              {showDivider && (
+                                <div className="border-t border-orange-300 my-2"></div>
+                              )}
+                              <div className={`flex justify-between items-center py-0.5 ${isGain ? 'text-green-700' : 'text-red-600'}`}>
+                                <span className="font-medium">{s.score}</span>
+                                <span className="font-bold font-mono">{s.change >= 0 ? '+' : ''}{s.change.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        
+                        {lastGain && (
+                          <div className="mt-2 pt-2 border-t border-orange-200">
+                            <div className="text-orange-800 font-medium text-center">
+                              🎯 {firstLoss ? `Even ${lastGain.score.toLowerCase()} gains rating!` : 'All scenarios gain rating!'}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+                
                 <div className="mt-3 bg-orange-100 rounded-lg p-2 text-center">
-                  <span className="text-orange-800 text-sm font-semibold">~{gameEstimates.aggressiveRange} games</span>
+                  <span className="text-orange-800 text-sm font-semibold">~{gameEstimates.aggressiveRange} games to target</span>
                 </div>
+
+                {/* High risk warning for large gaps */}
+                {Math.abs(aggressiveGap) > 0.6 && (
+                  <div className="mt-3 bg-red-100 border border-red-300 rounded-lg p-2">
+                    <div className="flex items-start gap-2">
+                      <span className="text-red-500">⚠️</span>
+                      {(() => {
+                        const k = 5 * Math.exp(-pathCurrent.reliability / 45);
+                        const mult = Math.abs(aggressiveGap) > 0.1 ? 1 + Math.abs(aggressiveGap) : 1;
+                        const worstMargin = -11; // 0-11 loss
+                        const perf = worstMargin - aggressiveExpectedMargin;
+                        const worstChange = Math.abs(0.006 * k * perf * mult);
+                        return (
+                          <p className="text-red-700 text-xs">
+                            <strong>High risk:</strong> You're {Math.abs(aggressiveGap).toFixed(2)} below opponents. 
+                            If you get blown out (0-11), you could lose {worstChange.toFixed(2)} in one game.
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-
+            
+            {/* Comparison insight */}
             <div className="mt-4 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-xl p-4">
               <div className="flex items-start gap-3">
                 <span className="text-xl">💡</span>
                 <div>
                   <div className="font-semibold text-purple-800 mb-1">The Math Behind Playing Up</div>
-                  <p className="text-purple-700 text-sm">In {aggBracket.play}, you're expected to lose by ~{Math.abs(aggExpMargin).toFixed(0)} points. So even a <strong>9-11 loss</strong> beats expectations = rating GAINS.</p>
+                  <p className="text-purple-700 text-sm">
+                    In {aggressiveBracket.play}, you're expected to lose by ~{Math.abs(aggressiveExpectedMargin).toFixed(0)} points. 
+                    So even a <strong>9-11 loss</strong> means you beat expectations by {(Math.abs(aggressiveExpectedMargin) - 2).toFixed(0)} points = rating GAINS. 
+                    You only lose rating if you get crushed by {Math.abs(aggressiveExpectedMargin).toFixed(0)}+ points.
+                  </p>
                 </div>
               </div>
             </div>
 
+            {/* Additional warning for very high gaps */}
+            {Math.abs(aggressiveGap) > 0.8 && (
+              <div className="mt-4 bg-amber-50 border-2 border-amber-400 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">🎲</span>
+                  <div>
+                    <div className="font-semibold text-amber-800 mb-1">Reality Check</div>
+                    <p className="text-amber-700 text-sm">
+                      Playing {Math.abs(aggressiveGap).toFixed(2)} above your level is a gamble. The math looks great IF you can compete, 
+                      but players at {aggressiveBracket.play} may have skills that make close games unlikely. 
+                      Consider: Can you realistically keep games within 5-6 points?
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Bracket to avoid */}
             <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2"><span className="text-red-500">⚠️</span><span className="font-semibold text-red-700">AVOID: {bracket.avoid} bracket</span></div>
-              <p className="text-red-600 text-sm">You'd be the FAVORITE — losses hurt 2x as much.</p>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-red-500">⚠️</span>
+                <span className="font-semibold text-red-700">AVOID: {bracket.avoid} bracket</span>
+              </div>
+              <p className="text-red-600 text-sm">
+                You'd be the FAVORITE there — losses hurt 2x as much. One bad game erases 2-3 good games.
+              </p>
             </div>
+          </div>
+
+          {/* Ideal Partner */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <h3 className="font-bold text-gray-800 mb-4">🤝 Ideal Partner</h3>
+            
+            <div className="mb-4">
+              <div className="text-sm text-gray-500 mb-2">Rating Range</div>
+              <div className="bg-gray-100 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-2xl font-bold text-gray-700">{partnerRange.low.toFixed(2)}</span>
+                  <div className="flex-1 mx-4 h-2 bg-gradient-to-r from-blue-400 to-blue-600 rounded-full"></div>
+                  <span className="text-2xl font-bold text-gray-700">{partnerRange.high.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-3 mb-4 text-sm">
+              <div className="flex justify-between text-gray-600">
+                <span>Your team avg with {partnerMid.toFixed(2)} partner:</span>
+                <span className="font-bold">{projectedTeamAvg.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-gray-600 mt-1">
+                <span>vs {bracket.play} opponents (~{bracket.oppAvg.toFixed(2)}):</span>
+                <span className="font-bold text-green-600">Underdog by {Math.abs(projectedGap).toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2 mb-4">
+              <div className="flex items-start gap-2 text-sm">
+                <span className="text-blue-500 mt-0.5">•</span>
+                <span className="text-gray-700">Keeps your team avg in underdog position for {bracket.play}</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm">
+                <span className="text-blue-500 mt-0.5">•</span>
+                <span className="text-gray-700">Not so low that opponents avg way above you</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Score Targets */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <h3 className="font-bold text-gray-800 mb-4">🏆 What to Aim For</h3>
+            
+            <div className="bg-gray-50 rounded-xl p-4 mb-4">
+              <p className="text-sm text-gray-600 text-center">
+                In the {bracket.play} bracket with a ~{partnerMid.toFixed(2)} partner,
+                you'll be <strong>UNDERDOG by ~{Math.abs(projectedGap).toFixed(2)}</strong>. You're expected to {projectedExpectedMargin >= 0 ? 'win' : 'lose'} by ~{Math.abs(projectedExpectedMargin).toFixed(0)} points.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              {[
+                { score: 'Win 11-5', margin: 6, color: 'green' },
+                { score: 'Win 11-7', margin: 4, color: 'green' },
+                { score: 'Win 11-9', margin: 2, color: 'green' },
+                { score: 'Lose 9-11', margin: -2, color: 'yellow' },
+                { score: 'Lose 7-11', margin: -4, color: 'yellow' },
+                { score: 'Lose 5-11', margin: -6, color: 'red' },
+              ].map((row, idx) => {
+                const perf = row.margin - projectedExpectedMargin;
+                const kLow = 5 * Math.exp(-pathCurrent.reliability / 45);
+                const kHigh = 5 * Math.exp(-(pathCurrent.reliability * 0.7) / 45);
+                const mult = Math.abs(projectedGap) > 0.1 ? 1 + Math.abs(projectedGap) : 1;
+                const changeLow = (0.006 * kLow * perf * mult).toFixed(2);
+                const changeHigh = (0.006 * kHigh * perf * mult).toFixed(2);
+                const perfDesc = perf > 0 ? `Beat expectations by ${perf.toFixed(0)}` : perf < 0 ? `Missed by ${Math.abs(perf).toFixed(0)}` : 'Met expectations';
+                
+                return (
+                  <div key={idx} className={`flex items-center justify-between p-3 rounded-xl ${
+                    row.color === 'green' ? 'bg-green-50' :
+                    row.color === 'yellow' ? 'bg-yellow-50' :
+                    'bg-red-50'
+                  }`}>
+                    <div>
+                      <div className={`font-semibold ${
+                        row.color === 'green' ? 'text-green-800' :
+                        row.color === 'yellow' ? 'text-yellow-800' :
+                        'text-red-800'
+                      }`}>{row.score}</div>
+                      <div className={`text-xs ${
+                        row.color === 'green' ? 'text-green-600' :
+                        row.color === 'yellow' ? 'text-yellow-600' :
+                        'text-red-600'
+                      }`}>{perfDesc}</div>
+                    </div>
+                    <div className={`font-mono font-bold ${
+                      row.color === 'green' ? 'text-green-700' :
+                      row.color === 'yellow' ? 'text-yellow-700' :
+                      'text-red-700'
+                    }`}>
+                      {parseFloat(changeLow) >= 0 ? '+' : ''}{changeLow} to {parseFloat(changeHigh) >= 0 ? '+' : ''}{changeHigh}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 bg-gradient-to-r from-blue-100 to-indigo-100 border-2 border-blue-300 rounded-xl p-4 text-center">
+              <span className="text-blue-800 font-semibold">🎯 YOUR TARGET: </span>
+              <span className="text-blue-900">Win by 3+ points, or lose by no more than {Math.max(2, Math.abs(Math.round(projectedExpectedMargin)))}</span>
+            </div>
+          </div>
+
+          {/* Estimated Path */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <h3 className="font-bold text-gray-800 mb-4">📈 Your Path to {targetDupr.toFixed(2)}</h3>
+            
+            <div className="bg-gray-50 rounded-xl p-4 mb-4 text-center text-sm text-gray-600">
+              Assuming you play in {bracket.play} bracket and win most games by 3-5 points
+            </div>
+
+            {isLowReliability ? (
+              <div className="space-y-4">
+                {(() => {
+                  // Calculate K factors at different phases
+                  const k1 = 5 * Math.exp(-pathCurrent.reliability / 45);
+                  const rel2 = pathCurrent.reliability + 5 * 15 * (100 - pathCurrent.reliability) / 100 / 5; // approx after 5 games
+                  const k2 = 5 * Math.exp(-Math.min(80, rel2) / 45);
+                  const rel3 = rel2 + 5 * 15 * (100 - rel2) / 100 / 5; // approx after 10 games
+                  const k3 = 5 * Math.exp(-Math.min(90, rel3) / 45);
+                  const mult = Math.abs(projectedGap) > 0.1 ? 1 + Math.abs(projectedGap) : 1;
+                  
+                  const gain1Low = (0.006 * k1 * 3 * mult).toFixed(2);
+                  const gain1High = (0.006 * k1 * 6 * mult).toFixed(2);
+                  const gain2Low = (0.006 * k2 * 3 * mult).toFixed(2);
+                  const gain2High = (0.006 * k2 * 5 * mult).toFixed(2);
+                  const gain3Low = (0.006 * k3 * 2 * mult).toFixed(2);
+                  const gain3High = (0.006 * k3 * 4 * mult).toFixed(2);
+                  
+                  return (
+                    <>
+                      <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="font-semibold text-green-800">PHASE 1 — Games 1-5</span>
+                          <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">Big gains!</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl font-bold text-green-700">{pathCurrent.dupr.toFixed(2)}</span>
+                          <div className="flex-1 h-3 bg-green-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-green-500 rounded-full" style={{ width: '100%' }}></div>
+                          </div>
+                          <span className="text-2xl font-bold text-green-700">{(pathCurrent.dupr + pointsNeeded * 0.44).toFixed(2)}</span>
+                        </div>
+                        <div className="text-sm text-green-600 mt-2">+{(pointsNeeded * 0.44).toFixed(2)} points • Gains: +{gain1Low} to +{gain1High}/game</div>
+                      </div>
+
+                      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="font-semibold text-blue-800">PHASE 2 — Games 6-10</span>
+                          <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Solid gains</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl font-bold text-blue-700">{(pathCurrent.dupr + pointsNeeded * 0.44).toFixed(2)}</span>
+                          <div className="flex-1 h-3 bg-blue-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 rounded-full" style={{ width: '100%' }}></div>
+                          </div>
+                          <span className="text-2xl font-bold text-blue-700">{(pathCurrent.dupr + pointsNeeded * 0.72).toFixed(2)}</span>
+                        </div>
+                        <div className="text-sm text-blue-600 mt-2">+{(pointsNeeded * 0.28).toFixed(2)} points • Gains: +{gain2Low} to +{gain2High}/game</div>
+                      </div>
+
+                      <div className="bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-200 rounded-xl p-4">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="font-semibold text-gray-800">PHASE 3 — Games 11+</span>
+                          <span className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded-full">Slower gains</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl font-bold text-gray-700">{(pathCurrent.dupr + pointsNeeded * 0.72).toFixed(2)}</span>
+                          <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-gray-500 rounded-full" style={{ width: '100%' }}></div>
+                          </div>
+                          <span className="text-2xl font-bold text-gray-700">{targetDupr.toFixed(2)} ✓</span>
+                        </div>
+                        <div className="text-sm text-gray-600 mt-2">+{(pointsNeeded * 0.28).toFixed(2)} points • Gains: +{gain3Low} to +{gain3High}/game</div>
+                      </div>
+                    </>
+                  );
+                })()}
+
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 text-center">
+                  <span className="text-amber-800 font-semibold">⚡ PHASE 1 = 44% of your total gains!</span>
+                  <p className="text-amber-700 text-sm mt-1">These early games matter the most!</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {(() => {
+                  const k = 5 * Math.exp(-pathCurrent.reliability / 45);
+                  const mult = Math.abs(projectedGap) > 0.1 ? 1 + Math.abs(projectedGap) : 1;
+                  const gainLow = (0.006 * k * 3 * mult).toFixed(3);
+                  const gainHigh = (0.006 * k * 5 * mult).toFixed(3);
+                  return (
+                    <>
+                      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+                        <div className="text-center mb-3">
+                          <span className="text-lg font-semibold text-blue-800">YOUR GAINS WILL BE STEADY</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl font-bold text-blue-700">{pathCurrent.dupr.toFixed(2)}</span>
+                          <div className="flex-1 h-3 bg-blue-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full" style={{ width: '100%' }}></div>
+                          </div>
+                          <span className="text-2xl font-bold text-blue-700">{targetDupr.toFixed(2)}</span>
+                        </div>
+                        <div className="text-center text-sm text-blue-600 mt-3">
+                          Average gain per game: +{gainLow} to +{gainHigh}
+                        </div>
+                      </div>
+
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                        <span className="text-blue-800">🐢 No shortcuts — just consistent, solid play</span>
+                        <p className="text-blue-600 text-sm mt-1">The good news: losses hurt less too</p>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <div className="bg-gray-50 rounded-xl p-4 text-center">
+                <div className="text-sm text-gray-500 mb-1">Estimated Total (Safe)</div>
+                <div className="text-2xl font-bold text-gray-800">
+                  {gameEstimates.safeRange} games
+                </div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-4 text-center">
+                <div className="text-sm text-gray-500 mb-1">At 3 games/week</div>
+                <div className="text-2xl font-bold text-gray-800">
+                  {Math.ceil(gameEstimates.safe * 0.8 / 3)}-{Math.ceil(gameEstimates.safe * 1.3 / 3)} weeks
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Mistakes to Avoid */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <h3 className="font-bold text-gray-800 mb-4">⚠️ Mistakes to Avoid</h3>
+            
+            <div className="space-y-3">
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-red-500 text-lg">🔴</span>
+                  <span className="font-semibold text-red-800">DON'T play down ({bracket.avoid} bracket)</span>
+                </div>
+                <p className="text-red-700 text-sm">
+                  You'll be the favorite, and ONE loss there wipes out 2-3 wins in the higher bracket.
+                </p>
+              </div>
+
+              {isLowReliability && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-red-500 text-lg">🔴</span>
+                    <span className="font-semibold text-red-800">DON'T take long breaks early on</span>
+                  </div>
+                  <p className="text-red-700 text-sm">
+                    Your biggest gains come in your first 5-10 games. If you pause, you're wasting your best opportunity.
+                  </p>
+                </div>
+              )}
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-yellow-600 text-lg">🟡</span>
+                  <span className="font-semibold text-yellow-800">MOVE UP when you're close</span>
+                </div>
+                <p className="text-yellow-700 text-sm">
+                  Once you hit {(parseFloat(bracket.play.split(' - ')[1]) - 0.15).toFixed(2)}+, consider moving to the next bracket up. 
+                  Stay underdog as long as possible.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="text-center text-xs text-gray-400 py-4">
+            Estimates assume consistent winning performance • Actual results will vary
           </div>
         </div>
       )}
 
+      {/* ==================== TOURNAMENT SIMULATOR TAB ==================== */}
       {activeTab === 'tournament' && (
         <div className="max-w-2xl mx-auto space-y-6">
+          {/* Starting Info */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
             <h3 className="font-bold text-gray-800 mb-4">🏆 Tournament Starting Point</h3>
+            <p className="text-sm text-gray-500 mb-4">Enter your stats at the START of the tournament</p>
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-4">
-                <div className="text-xs font-bold text-blue-600 uppercase">You</div>
-                <DuprInput value={tournamentStart.dupr} onChange={(v) => setTournamentStart({ ...tournamentStart, dupr: v })} label="Your Rating" />
-                <ReliabilitySlider value={tournamentStart.reliability} onChange={(v) => setTournamentStart({ ...tournamentStart, reliability: v })} label="Your Reliability" />
+                <div className="text-xs font-bold text-blue-600 uppercase tracking-wide">You</div>
+                <DuprInput 
+                  value={tournamentStart.dupr} 
+                  onChange={(v) => setTournamentStart({ ...tournamentStart, dupr: v })}
+                  label="Your Rating"
+                />
+                <ReliabilitySlider 
+                  value={tournamentStart.reliability} 
+                  onChange={(v) => setTournamentStart({ ...tournamentStart, reliability: v })}
+                  label="Your Reliability"
+                />
               </div>
               <div className="space-y-4">
-                <div className="text-xs font-bold text-blue-600 uppercase">Partner</div>
-                <DuprInput value={tournamentPartner.dupr} onChange={(v) => setTournamentPartner({ ...tournamentPartner, dupr: v })} label="Partner Rating" />
-                <ReliabilitySlider value={tournamentPartner.reliability} onChange={(v) => setTournamentPartner({ ...tournamentPartner, reliability: v })} label="Partner Reliability" />
+                <div className="text-xs font-bold text-blue-600 uppercase tracking-wide">Partner</div>
+                <DuprInput 
+                  value={tournamentPartner.dupr} 
+                  onChange={(v) => setTournamentPartner({ ...tournamentPartner, dupr: v })}
+                  label="Partner Rating"
+                />
+                <ReliabilitySlider 
+                  value={tournamentPartner.reliability} 
+                  onChange={(v) => setTournamentPartner({ ...tournamentPartner, reliability: v })}
+                  label="Partner Reliability"
+                />
               </div>
             </div>
           </div>
 
+          {/* Match List */}
           {tournamentMatches.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="bg-gradient-to-r from-gray-50 to-white px-5 py-4 border-b border-gray-100"><h3 className="font-bold text-gray-800">Match Results</h3></div>
+              <div className="bg-gradient-to-r from-gray-50 to-white px-5 py-4 border-b border-gray-100">
+                <h3 className="font-bold text-gray-800">Match Results</h3>
+              </div>
+              
               <div className="divide-y divide-gray-100">
                 {(() => {
                   let runningDupr = tournamentStart.dupr;
                   let runningRel = tournamentStart.reliability;
+                  
                   return tournamentMatches.map((match, idx) => {
-                    const oAvg = (match.opp1 + match.opp2) / 2;
-                    const change = calcChange(runningDupr, runningRel, tournamentPartner.dupr, tournamentPartner.reliability, oAvg, match.yourScore, match.theirScore);
+                    const oppAvg = (match.opp1 + match.opp2) / 2;
+                    const change = calcChange(
+                      runningDupr, 
+                      runningRel, 
+                      tournamentPartner.dupr, 
+                      tournamentPartner.reliability, 
+                      oppAvg, 
+                      match.yourScore, 
+                      match.theirScore
+                    );
+                    
                     const prevDupr = runningDupr;
+                    const prevRel = runningRel;
                     runningDupr += change;
                     runningRel = Math.min(100, runningRel + 15 * (100 - runningRel) / 100);
+                    
                     const isWin = match.yourScore > match.theirScore;
+                    const isPositive = change > 0.005;
+                    const isNegative = change < -0.005;
+                    
                     return (
                       <div key={idx} className="p-4">
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-3">
                             <span className="text-sm font-bold text-gray-400">#{idx + 1}</span>
-                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${isWin ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{isWin ? 'WIN' : 'LOSS'}</span>
-                            <span className="font-mono font-bold text-gray-700">{match.yourScore}-{match.theirScore}</span>
+                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                              isWin ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {isWin ? 'WIN' : 'LOSS'}
+                            </span>
+                            <span className="font-mono font-bold text-gray-700">
+                              {match.yourScore}-{match.theirScore}
+                            </span>
                           </div>
-                          <button onClick={() => setTournamentMatches(tournamentMatches.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500">✕</button>
+                          <button
+                            onClick={() => setTournamentMatches(tournamentMatches.filter((_, i) => i !== idx))}
+                            className="text-gray-400 hover:text-red-500 transition-colors"
+                          >
+                            ✕
+                          </button>
                         </div>
+                        
                         <div className="flex items-center justify-between text-sm">
-                          <div className="text-gray-500">vs {match.opp1.toFixed(2)} & {match.opp2.toFixed(2)}</div>
+                          <div className="text-gray-500">
+                            vs {match.opp1.toFixed(2)} & {match.opp2.toFixed(2)} (avg: {oppAvg.toFixed(2)})
+                          </div>
                           <div className="flex items-center gap-3">
-                            <span className={`font-mono font-bold ${change > 0.005 ? 'text-green-600' : change < -0.005 ? 'text-red-500' : 'text-gray-500'}`}>{change >= 0 ? '+' : ''}{change.toFixed(3)}</span>
+                            <span className={`font-mono font-bold ${
+                              isPositive ? 'text-green-600' : isNegative ? 'text-red-500' : 'text-gray-500'
+                            }`}>
+                              {change >= 0 ? '+' : ''}{change.toFixed(3)}
+                            </span>
                             <span className="text-gray-400">→</span>
                             <span className="font-bold text-gray-700">{runningDupr.toFixed(3)}</span>
                           </div>
+                        </div>
+                        
+                        <div className="mt-1 text-xs text-gray-400">
+                          Reliability: {prevRel.toFixed(0)}% → {runningRel.toFixed(0)}%
                         </div>
                       </div>
                     );
@@ -436,92 +1505,223 @@ function App() {
             </div>
           )}
 
+          {/* Add Match */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
             <h3 className="font-bold text-gray-800 mb-4">➕ Add Match Result</h3>
+            
             <div className="space-y-4">
+              {/* Opponents */}
               <div>
-                <div className="text-xs font-bold text-orange-600 uppercase mb-2">Opponents</div>
+                <div className="text-xs font-bold text-orange-600 uppercase tracking-wide mb-2">Opponents</div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Opponent 1</label>
-                    <input type="number" step="0.01" value={newMatch.opp1} onChange={(e) => setNewMatch({ ...newMatch, opp1: parseFloat(e.target.value) || 3.0 })} className="w-full px-3 py-2 border-2 border-gray-200 rounded-xl text-center font-bold focus:outline-none focus:border-blue-500" />
+                    <label className="block text-xs text-gray-500 mb-1">Opponent 1 Rating</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newMatch.opp1}
+                      onChange={(e) => setNewMatch({ ...newMatch, opp1: parseFloat(e.target.value) || 3.0 })}
+                      className="w-full px-3 py-2 border-2 border-gray-200 rounded-xl text-center font-bold focus:outline-none focus:border-blue-500"
+                    />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Opponent 2</label>
-                    <input type="number" step="0.01" value={newMatch.opp2} onChange={(e) => setNewMatch({ ...newMatch, opp2: parseFloat(e.target.value) || 3.0 })} className="w-full px-3 py-2 border-2 border-gray-200 rounded-xl text-center font-bold focus:outline-none focus:border-blue-500" />
+                    <label className="block text-xs text-gray-500 mb-1">Opponent 2 Rating</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newMatch.opp2}
+                      onChange={(e) => setNewMatch({ ...newMatch, opp2: parseFloat(e.target.value) || 3.0 })}
+                      className="w-full px-3 py-2 border-2 border-gray-200 rounded-xl text-center font-bold focus:outline-none focus:border-blue-500"
+                    />
                   </div>
                 </div>
               </div>
+              
+              {/* Score */}
               <div>
-                <div className="text-xs font-bold text-gray-600 uppercase mb-2">Score</div>
+                <div className="text-xs font-bold text-gray-600 uppercase tracking-wide mb-2">Final Score</div>
                 <div className="flex items-center justify-center gap-4">
-                  <div className="flex items-center bg-blue-50 rounded-xl p-1 border-2 border-blue-200">
-                    <button onClick={() => setNewMatch({ ...newMatch, yourScore: Math.max(0, newMatch.yourScore - 1) })} className="w-10 h-10 rounded-lg bg-white text-blue-600 font-bold text-xl">−</button>
-                    <span className="w-12 text-center text-2xl font-extrabold text-blue-700">{newMatch.yourScore}</span>
-                    <button onClick={() => setNewMatch({ ...newMatch, yourScore: Math.min(15, newMatch.yourScore + 1) })} className="w-10 h-10 rounded-lg bg-white text-blue-600 font-bold text-xl">+</button>
+                  <div className="text-center">
+                    <div className="text-xs text-blue-600 font-medium mb-1">You</div>
+                    <div className="flex items-center bg-blue-50 rounded-xl p-1 border-2 border-blue-200">
+                      <button
+                        onClick={() => setNewMatch({ ...newMatch, yourScore: Math.max(0, newMatch.yourScore - 1) })}
+                        className="w-10 h-10 rounded-lg bg-white text-blue-600 font-bold text-xl shadow-sm hover:bg-blue-600 hover:text-white transition-all"
+                      >−</button>
+                      <span className="w-12 text-center text-2xl font-extrabold text-blue-700">{newMatch.yourScore}</span>
+                      <button
+                        onClick={() => setNewMatch({ ...newMatch, yourScore: Math.min(15, newMatch.yourScore + 1) })}
+                        className="w-10 h-10 rounded-lg bg-white text-blue-600 font-bold text-xl shadow-sm hover:bg-blue-600 hover:text-white transition-all"
+                      >+</button>
+                    </div>
                   </div>
-                  <span className="text-gray-400 font-bold">vs</span>
-                  <div className="flex items-center bg-orange-50 rounded-xl p-1 border-2 border-orange-200">
-                    <button onClick={() => setNewMatch({ ...newMatch, theirScore: Math.max(0, newMatch.theirScore - 1) })} className="w-10 h-10 rounded-lg bg-white text-orange-600 font-bold text-xl">−</button>
-                    <span className="w-12 text-center text-2xl font-extrabold text-orange-700">{newMatch.theirScore}</span>
-                    <button onClick={() => setNewMatch({ ...newMatch, theirScore: Math.min(15, newMatch.theirScore + 1) })} className="w-10 h-10 rounded-lg bg-white text-orange-600 font-bold text-xl">+</button>
+                  
+                  <span className="text-gray-400 font-bold text-xl pt-5">vs</span>
+                  
+                  <div className="text-center">
+                    <div className="text-xs text-orange-600 font-medium mb-1">Them</div>
+                    <div className="flex items-center bg-orange-50 rounded-xl p-1 border-2 border-orange-200">
+                      <button
+                        onClick={() => setNewMatch({ ...newMatch, theirScore: Math.max(0, newMatch.theirScore - 1) })}
+                        className="w-10 h-10 rounded-lg bg-white text-orange-600 font-bold text-xl shadow-sm hover:bg-orange-600 hover:text-white transition-all"
+                      >−</button>
+                      <span className="w-12 text-center text-2xl font-extrabold text-orange-700">{newMatch.theirScore}</span>
+                      <button
+                        onClick={() => setNewMatch({ ...newMatch, theirScore: Math.min(15, newMatch.theirScore + 1) })}
+                        className="w-10 h-10 rounded-lg bg-white text-orange-600 font-bold text-xl shadow-sm hover:bg-orange-600 hover:text-white transition-all"
+                      >+</button>
+                    </div>
                   </div>
                 </div>
               </div>
-              <button onClick={() => { setTournamentMatches([...tournamentMatches, { ...newMatch }]); setNewMatch({ opp1: 3.80, opp2: 3.75, yourScore: 11, theirScore: 7 }); }} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-md">Add Match</button>
+              
+              {/* Preview */}
+              {(() => {
+                let runningDupr = tournamentStart.dupr;
+                let runningRel = tournamentStart.reliability;
+                
+                // Calculate through existing matches
+                tournamentMatches.forEach(match => {
+                  const oppAvg = (match.opp1 + match.opp2) / 2;
+                  const change = calcChange(runningDupr, runningRel, tournamentPartner.dupr, tournamentPartner.reliability, oppAvg, match.yourScore, match.theirScore);
+                  runningDupr += change;
+                  runningRel = Math.min(100, runningRel + 15 * (100 - runningRel) / 100);
+                });
+                
+                // Preview new match
+                const oppAvg = (newMatch.opp1 + newMatch.opp2) / 2;
+                const previewChange = calcChange(runningDupr, runningRel, tournamentPartner.dupr, tournamentPartner.reliability, oppAvg, newMatch.yourScore, newMatch.theirScore);
+                const isWin = newMatch.yourScore > newMatch.theirScore;
+                const isPositive = previewChange > 0.005;
+                const isNegative = previewChange < -0.005;
+                
+                return (
+                  <div className={`rounded-xl p-4 text-center ${
+                    isWin ? 'bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200' :
+                    'bg-gradient-to-r from-red-50 to-orange-50 border border-red-200'
+                  }`}>
+                    <div className="text-xs text-gray-500 mb-1">Preview</div>
+                    <div className={`text-2xl font-extrabold ${
+                      isPositive ? 'text-green-600' : isNegative ? 'text-red-500' : 'text-gray-500'
+                    }`}>
+                      {previewChange >= 0 ? '+' : ''}{previewChange.toFixed(3)}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {runningDupr.toFixed(3)} → {(runningDupr + previewChange).toFixed(3)}
+                    </div>
+                  </div>
+                );
+              })()}
+              
+              {/* Add Button */}
+              <button
+                onClick={() => {
+                  setTournamentMatches([...tournamentMatches, { ...newMatch }]);
+                  setNewMatch({ opp1: 3.80, opp2: 3.75, yourScore: 11, theirScore: 7 });
+                }}
+                className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors shadow-md hover:shadow-lg"
+              >
+                Add Match
+              </button>
             </div>
           </div>
 
+          {/* Tournament Summary */}
           {tournamentMatches.length > 0 && (
             <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-5 shadow-lg text-white">
               <h3 className="font-bold text-white/90 mb-4">📊 Tournament Summary</h3>
+              
               {(() => {
                 let finalDupr = tournamentStart.dupr;
                 let finalRel = tournamentStart.reliability;
-                let wins = 0, losses = 0;
-                tournamentMatches.forEach(m => {
-                  const oAvg = (m.opp1 + m.opp2) / 2;
-                  const c = calcChange(finalDupr, finalRel, tournamentPartner.dupr, tournamentPartner.reliability, oAvg, m.yourScore, m.theirScore);
-                  finalDupr += c;
+                let wins = 0;
+                let losses = 0;
+                
+                tournamentMatches.forEach(match => {
+                  const oppAvg = (match.opp1 + match.opp2) / 2;
+                  const change = calcChange(finalDupr, finalRel, tournamentPartner.dupr, tournamentPartner.reliability, oppAvg, match.yourScore, match.theirScore);
+                  finalDupr += change;
                   finalRel = Math.min(100, finalRel + 15 * (100 - finalRel) / 100);
-                  if (m.yourScore > m.theirScore) wins++; else losses++;
+                  if (match.yourScore > match.theirScore) wins++;
+                  else losses++;
                 });
+                
                 const totalChange = finalDupr - tournamentStart.dupr;
+                const isPositive = totalChange > 0.005;
+                const isNegative = totalChange < -0.005;
+                
                 return (
                   <div className="space-y-4">
                     <div className="grid grid-cols-3 gap-4 text-center">
-                      <div className="bg-white/10 rounded-xl p-3"><div className="text-white/60 text-xs mb-1">Record</div><div className="text-2xl font-extrabold">{wins}-{losses}</div></div>
-                      <div className="bg-white/10 rounded-xl p-3"><div className="text-white/60 text-xs mb-1">Change</div><div className={`text-2xl font-extrabold ${totalChange > 0.005 ? 'text-green-300' : totalChange < -0.005 ? 'text-red-300' : ''}`}>{totalChange >= 0 ? '+' : ''}{totalChange.toFixed(3)}</div></div>
-                      <div className="bg-white/10 rounded-xl p-3"><div className="text-white/60 text-xs mb-1">Reliability</div><div className="text-2xl font-extrabold">{finalRel.toFixed(0)}%</div></div>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-4">
-                      <div className="flex items-center justify-center gap-4">
-                        <div className="text-center"><div className="text-white/60 text-xs">Started</div><div className="text-3xl font-extrabold">{tournamentStart.dupr.toFixed(2)}</div></div>
-                        <div className="text-3xl text-white/40">→</div>
-                        <div className="text-center"><div className="text-white/60 text-xs">Projected</div><div className={`text-3xl font-extrabold ${totalChange > 0.005 ? 'text-green-300' : totalChange < -0.005 ? 'text-red-300' : ''}`}>{finalDupr.toFixed(2)}</div></div>
+                      <div className="bg-white/10 rounded-xl p-3">
+                        <div className="text-white/60 text-xs mb-1">Record</div>
+                        <div className="text-2xl font-extrabold">{wins}-{losses}</div>
+                      </div>
+                      <div className="bg-white/10 rounded-xl p-3">
+                        <div className="text-white/60 text-xs mb-1">Change</div>
+                        <div className={`text-2xl font-extrabold ${
+                          isPositive ? 'text-green-300' : isNegative ? 'text-red-300' : 'text-white'
+                        }`}>
+                          {totalChange >= 0 ? '+' : ''}{totalChange.toFixed(3)}
+                        </div>
+                      </div>
+                      <div className="bg-white/10 rounded-xl p-3">
+                        <div className="text-white/60 text-xs mb-1">Reliability</div>
+                        <div className="text-2xl font-extrabold">{finalRel.toFixed(0)}%</div>
                       </div>
                     </div>
-                    <button onClick={() => setTournamentMatches([])} className="w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-white/80 text-sm font-medium">Clear All</button>
+                    
+                    <div className="bg-white/10 rounded-xl p-4">
+                      <div className="flex items-center justify-center gap-4">
+                        <div className="text-center">
+                          <div className="text-white/60 text-xs">Started</div>
+                          <div className="text-3xl font-extrabold">{tournamentStart.dupr.toFixed(2)}</div>
+                          <div className="text-white/60 text-xs">{tournamentStart.reliability}% rel</div>
+                        </div>
+                        <div className="text-3xl text-white/40">→</div>
+                        <div className="text-center">
+                          <div className="text-white/60 text-xs">Projected</div>
+                          <div className={`text-3xl font-extrabold ${
+                            isPositive ? 'text-green-300' : isNegative ? 'text-red-300' : 'text-white'
+                          }`}>{finalDupr.toFixed(2)}</div>
+                          <div className="text-white/60 text-xs">{finalRel.toFixed(0)}% rel</div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Clear button */}
+                    <button
+                      onClick={() => setTournamentMatches([])}
+                      className="w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-white/80 text-sm font-medium transition-colors"
+                    >
+                      Clear All Matches
+                    </button>
                   </div>
                 );
               })()}
             </div>
           )}
 
+          {/* Empty state */}
           {tournamentMatches.length === 0 && (
             <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-8 text-center">
               <div className="text-4xl mb-3">🏆</div>
-              <div className="text-gray-600 font-medium">No matches yet</div>
-              <div className="text-gray-400 text-sm">Add your match results above</div>
+              <div className="text-gray-600 font-medium mb-1">No matches yet</div>
+              <div className="text-gray-400 text-sm">Add your match results above to track your tournament progress</div>
             </div>
           )}
+
+          {/* Footer */}
+          <div className="text-center text-xs text-gray-400 py-4">
+            Results update in real-time • Ratings typically updates within 24 hours
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(<PickleballRatingSimulator />);
 </script>
 </body>
 </html>
